@@ -54,7 +54,7 @@ jobs:
             }
 
             $extractModules = ($files | Where-Object {
-              $_.filename -notmatch 'infrastructure/azure/_' <# Do not select files in folder starting with _#> `
+              $_.filename -notmatch 'azure/_' <# Do not select files in folder starting with _#> `
               -and $_.filename -match '\.bicep$' <# Only select files with .bicep extension #> `
               -and $_.filename -notmatch 'example' <# Do not select bicep files with example in it. Like example-app #> `
               -and $_.status -notmatch 'removed' <# Do not select that are removed from the repository #> `
@@ -64,7 +64,7 @@ jobs:
 
             foreach($extract in $extractModules){
               $getModule = ''
-              $extract = $extract -replace '^infrastructure/azure/', '' 
+              $extract = $extract -replace '^azure/', '' 
               $split = $extract -Split '/'
               $bicepIndex = $split.IndexOf('bicep') #Get index for bicep substring in filename
               
