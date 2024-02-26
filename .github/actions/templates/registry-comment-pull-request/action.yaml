@@ -1,0 +1,87 @@
+name: "Create/update comment in pull request"
+
+inputs: 
+  module:
+    required: true
+  githubAppID:
+    required: true
+    type: string
+  githubPrivateKey:
+    required: true
+  currentVersion:
+    required: true
+  newVersion:
+    required: true
+  documentationPath:
+    required: true
+  moduleFolderPath:
+    required: true
+  psruleOutputMarkdown:
+    required: true
+  trivyLowMediumOutputMarkdown:
+    required: true
+  trivyHighCriticalOutputMarkdown:
+    required: true
+  
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create GitHub App token
+      uses: actions/create-github-app-token@v1
+      id: app-token
+      with: 
+        app-id: ${{ inputs.githubAppID }}
+        private-key: ${{ inputs.githubPrivateKey }}
+    - name: Setup module name
+      id: set-comment-filename
+      shell: bash
+      run: |
+        #Replacing the / with - for modules with a parent folder, else comment function wants to read from the parent folder, which doesn't exists.
+        commentFileName=$(echo "comment-${{ inputs.module }}.md" | tr '/' '-')
+        echo "::set-output name=commentFileName::$commentFileName"
+    - name: Create comment markdown content
+      shell: bash
+      run: |
+        #markdown_file=${{ steps.set-comment-filename.outputs.commentFileName }}
+        cat <<EOF > ${{ steps.set-comment-filename.outputs.commentFileName }}
+        # Summary for module ${{ inputs.module }}
+        🚀 
+        
+        **Current version**: ${{ inputs.currentVersion }}
+        **New version**: ${{ inputs.newVersion }}
+        **Folder**: ${{ inputs.moduleFolderPath }}
+        **README file**: ${{ inputs.documentationPath }}
+
+        [Workflow Run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
+        EOF
+
+        ##Adding the scan results for PSRule and Trivy to ${{ steps.set-comment-filename.outputs.commentFileName }}
+
+        echo -e "\n$(cat "${{ inputs.psruleOutputMarkdown }}")" >> ${{ steps.set-comment-filename.outputs.commentFileName }}
+        echo -e "\n$(cat "${{ inputs.trivyLowMediumOutputMarkdown }}")" >> ${{ steps.set-comment-filename.outputs.commentFileName }}
+        echo -e "\n$(cat "${{ inputs.trivyHighCriticalOutputMarkdown }}")" >> ${{ steps.set-comment-filename.outputs.commentFileName }}
+    - name: Find Comment
+      uses: peter-evans/find-comment@v3
+      id: fc
+      with:
+        token: ${{ steps.app-token.outputs.token }}
+        issue-number: ${{ github.event.number }}
+        body-includes: Summary for module ${{ inputs.module }}
+    - name: Create comment
+      if: steps.fc.outputs.comment-id == ''
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        token: ${{ steps.app-token.outputs.token }}
+        issue-number: ${{ github.event.number }}
+        body-path: ${{ steps.set-comment-filename.outputs.commentFileName }}
+    - name: Update comment
+      if: steps.fc.outputs.comment-id != ''
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        token: ${{ steps.app-token.outputs.token }}
+        issue-number: ${{ github.event.number }}
+        comment-id: ${{ steps.fc.outputs.comment-id }}
+        edit-mode: replace
+        body-path: ${{ steps.set-comment-filename.outputs.commentFileName }}
+          

@@ -1,0 +1,10 @@
+registry: registryname.azurecr.io
+templatesFile: resources/templates.jsonc
+deploymentConfigFile: configs/config.jsonc
+registryRootFolder: ./registry/
+moduleRootFolder: ./azure/
+repositoryURL: https://github.com/companyName/repositoryName
+psrulePath: ./registry/scripts/psrule
+psruleOutputMarkdown: psrule-scan.md
+trivyLowMediumOutputMarkdown: trivy-config-low-medium.md
+trivyHighCriticalOutputMarkdown: trivy-config-high-critical.md

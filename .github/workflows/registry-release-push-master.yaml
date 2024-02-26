@@ -1,0 +1,121 @@
+name: Release Bicep Registry - On push to master
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'azure/**.bicep'
+      
+env:
+  variableFile: ./.github/variables/prd.yaml
+
+jobs:
+  get-modules-to-publish:
+    uses: ./.github/workflows/registry-get-changed-modules.yaml
+    with:
+      githubAppID: ${{ vars.GITHUBAPPID }}
+    secrets: inherit
+  
+  publish-modules-to-registry:
+    needs: get-modules-to-publish
+    if: ${{ needs.get-modules-to-publish.outputs.modules }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: ${{ fromJson(needs.get-modules-to-publish.outputs.modules) }}
+    steps:
+    - name: Create GitHub App token
+      uses: actions/create-github-app-token@v1
+      id: app-token
+      with: 
+        app-id: ${{ vars.GITHUBAPPID }}
+        private-key: ${{ secrets.GITHUBPRIVATEKEY }}
+    - name: Checkout code
+      uses: actions/checkout@v2
+      with:
+        token: ${{ steps.app-token.outputs.token }}
+    - name: Import variable file
+      uses: zlatko-ms/varfiletoenv@v3
+      with:
+        paths: ${{ env.variableFile }}
+    - name: Get Module information
+      uses: ./.github/actions/templates/registry-get-module-information
+      id: get-module-information
+      with: 
+        module: ${{ matrix.module }}
+        templatesFile: ${{ env.templatesFile }}
+        deploymentConfigFile: ${{ env.deploymentConfigFile }}
+        registryRootFolder: ${{ env.registryRootFolder }}
+        moduleRootFolder: ${{ env.moduleRootFolder }}
+        registry: ${{ env.registry }}
+      env:
+        AZURE_CREDENTIALS: ${{ secrets.BICEP_GITHUBACTIONS }}   
+    - name: "Publish module ${{ matrix.module }}"
+      uses: ./.github/actions/templates/registry-publish-module
+      with:
+        module: ${{ matrix.module }}
+        registry: ${{ env.registry }}
+        newVersion: ${{ steps.get-module-information.outputs.newVersion }}
+        moduleFilePath: ${{ steps.get-module-information.outputs.moduleFilePath }}
+        documentationPath: ${{ steps.get-module-information.outputs.documentationPath }}
+        repositoryURL: ${{ env.repositoryURL }}
+      env:
+        AZURE_CREDENTIALS: ${{ secrets.BICEP_GITHUBACTIONS }}   
+    - name: "Update documentation for ${{ matrix.module }}"
+      uses: ./.github/actions/templates/registry-update-documentation-module
+      with:
+        module: ${{ matrix.module }}
+        newVersion: ${{ steps.get-module-information.outputs.newVersion }}
+        documentationPath: ${{ steps.get-module-information.outputs.documentationPath }}
+        repositoryURL: ${{ env.repositoryURL }}
+    - name: "Create changes artifact for ${{ matrix.module }}"
+      id: git-changes
+      run: |
+        git diff --name-only >> changed_files.txt
+
+        #Replacing the / with - for modules with a parent folder, else zip function wants to create a zip file in the parent folder, which doesn't exists.
+        moduleZipString=$(echo "changes-${{ matrix.module }}.zip" | tr '/' '-')
+        
+        zip -r $moduleZipString $(cat changed_files.txt)
+        echo "::set-output name=moduleZipString::$moduleZipString"
+    - name: "Upload changes artifact for ${{ matrix.module }}"
+      uses: actions/upload-artifact@v3 #Using version 3 because it supports uploading multiple files to the same artifact name
+      with:
+        name: changes
+        path: ${{ steps.git-changes.outputs.moduleZipString }}
+
+  update-module-versions:
+    needs: publish-modules-to-registry
+    runs-on: ubuntu-latest
+    steps:
+    - name: Create GitHub App token
+      uses: actions/create-github-app-token@v1
+      id: app-token
+      with: 
+        app-id: ${{ vars.GITHUBAPPID }}
+        private-key: ${{ secrets.GITHUBPRIVATEKEY }}
+    - name: Checkout code
+      uses: actions/checkout@v2
+      with:
+        token: ${{ steps.app-token.outputs.token }}
+    - name: Import variable file
+      uses: zlatko-ms/varfiletoenv@v3
+      with:
+        paths: ${{ env.variableFile }}
+    - uses: actions/download-artifact@v3 #Using version 3 because it supports downloading multiple files to the same artifact name
+      with:
+        name: changes
+    - name: Display structure of downloaded files
+      run: ls -R
+    - name: Extract changes for modules
+      run: |
+        for artifact in $(find . -type f -name "changes-*.zip"); do
+          unzip -o $artifact
+        done
+    - name: Commit documentation
+      run: |
+        git config --global user.name 'GITHUB-USERNAME'
+        git config --global user.email 'GITHUB-EMAIL'
+        git commit -am "Workflow on push master - added documentation for new/changes modules"
+        git push

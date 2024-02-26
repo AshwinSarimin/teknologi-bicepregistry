@@ -1,0 +1,64 @@
+name: "Update module documentation"
+
+inputs: 
+  module:
+    description: "The module to deploy to ACR"
+    required: true
+  newVersion:
+    description: "The new version for the module"
+    required: true
+  documentationPath:
+    description: "The documentation path for the module"
+    required: true
+  repositoryURL: 
+    description: "The repository URL where the modules are stored"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Update module documentation for ${{ inputs.module }}
+      id: update-documentation
+      shell: pwsh
+      run: |
+        $module = '${{ inputs.module }}'
+        $newVersion = ('${{ inputs.newVersion }}').replace("v","")
+        $documentationPath = '${{ inputs.documentationPath }}'
+        $readmePath = $documentationPath.Substring(1)
+        $documentationUri = "${{ inputs.repositoryURL }}/blob/${{ github.sha }}$readmePath"
+        $newVersionString = "[$newVersion]($documentationUri)"
+        
+        $getVersion = Get-Content -Path $documentationPath | Select-String -Pattern "| $newVersion |" -SimpleMatch
+        if(!$getVersion){
+          write-output "Cannot retrieve version $newVersion in simple format"
+          $getVersion = Get-Content -Path $documentationPath | Select-String -Pattern "\| \[$newVersion]\(https://.*\) \|"
+          if($getVersion){
+            write-output "Retrieved version $newVersion in document linked format"
+            if($getVersion.Count -ne 1){
+                write-error "There are multiple string patterns found for $newVersion in README file: $documentationPath"
+                throw
+            }
+            else{
+              $getVersionFormat = $getVersion.Line.Split("|")
+              $currentVersionString = $getVersionFormat[1]
+              $currentBreakingChangesString = $getVersionFormat[2]
+              $currentDescriptionString = $getVersionFormat[3]
+              $newVersionFormat = "| " + $newVersionString + " |" + $currentBreakingChangesString + "|" + $currentDescriptionString + "|"
+              write-output $newVersionFormat 
+              (Get-Content -Path $documentationPath | %{$_.Replace($getVersion, $newVersionFormat )}) | Set-Content -Path $documentationPath
+            }
+          }
+          else{
+            write-error "Cannot get version $newVersion in the ChangeLog from README file: $documentationPath"
+            throw
+          }
+        }
+        else{
+          if($getVersion.Count -ne 1){
+                write-error "There are multiple string patterns found for $newVersion in README file: $documentationPath"
+                throw
+          }
+          else{
+            (Get-Content -Path $documentationPath | %{$_.Replace("| $newVersion |", "| $newVersionString |")}) | Set-Content -Path $documentationPath
+          }
+        }        

@@ -1,0 +1,112 @@
+name: "Execute PSRule module test"
+description: "Execute PSRule module test"
+
+inputs:
+  moduleFolderPath:
+    description: "The path to the module folder"
+    required: true
+    default: ""
+  psrulePath:
+    description: "The path to PSRule configurations"
+    required: true
+  psruleOutputMarkdown:
+    description: "The file name for exporting the scan results"
+    required: true
+
+
+runs:
+  using: "composite"
+  steps:
+    # [PSRule validation] task(s)
+    #-----------------------------
+    - name: Run PSRule analysis
+      uses: microsoft/ps-rule@v2.9.0
+      continue-on-error: false # Setting this whilst PSRule gets bedded in, in this project
+      with:
+        modules: "PSRule.Rules.Azure"
+        inputPath: "${{ inputs.moduleFolderPath}}/"
+        outputFormat: Json
+        outputPath: psrule-scan.json
+        option: "${{ inputs.psrulePath}}/ps-rule.yaml" # Path to PSRule configuration options file
+        source: "${{ inputs.psrulePath}}/.ps-rule/" # Path to folder containing suppression rules to use for analysis.
+        summary: true
+    - name: Edit results for pull request summary
+      if: always()
+      shell: pwsh
+      run: |
+        $results = Get-Content -Path psrule-scan.json -Raw | ConvertFrom-Json
+        
+        $passed = $results | Where-Object {$_.outcome -eq "Pass"}
+        $fail = $results | Where-Object {$_.outcome -eq "Fail"}
+        $other = $results | Where-Object { $_.outcome -ne "Fail" -and $_.outcome -ne "Pass" }
+
+        $destination = '${{ inputs.psruleOutputMarkdown}}'
+        New-Item -Type File -Path $destination -Force
+
+        $markdownContent = "<h2>PSRule - Failed rules</h2>" + "`r`n`r`n" + "`r`n"        
+        foreach($f in $fail){
+            $displayName = "<h3>$($f.info.displayName)</h3>"
+            $description = "$($f.info.description)"
+            $recommendation = "**Recommendation**  `r`n`r`n $($f.info.recommendation)"
+            $name = $f.info.name
+            $synopsis = $f.info.synopsis
+            $sources = ""
+            foreach($source in $f.source){
+                $sources += "$($source.file)" + "<br>" + "- Line: $($source.line)" + "<br>" + "- Position: $($source.position)" + "<br>" + "- Type: $($source.type)" + "<br>"              
+                $sources += "<br>"            
+            }
+            $targetName = $f.targetName
+            $targetType = $f.targetType
+            $reason = $f.reason
+            $tableContent = "| Sources | Synopsis | Name | Target Name | Target Type | Reason |" + "`r`n | --- | --- | --- | --- | --- | --- |" + "`r`n"
+            $tableContent += "| $sources | $synopsis | $name | $targetName | $targetType | $reason |" + "`r`n"
+            $markdownContent += $displayName + "`r`n`r`n" + $description + "`r`n`r`n" + $recommendation + "`r`n`r`n" + $tableContent
+        }
+
+        $markdownContent += "`r`n" + "<h2>PSRule - Passed rules</h2>" + "`r`n`r`n" + "`r`n"
+        $markdownContent += "<details>" + "`r`n" + "  <summary>Show passed rules</summary>" + "`r`n`r`n"
+        foreach($p in $passed){
+            $displayName = "<h3>$($p.info.displayName)</h3>"
+            $description = "$($p.info.description)"
+            $recommendation = "**Recommendation**  `r`n`r`n $($p.info.recommendation)"
+            $name = $p.info.name
+            $synopsis = $p.info.synopsis
+            $sources = ""
+            foreach($source in $p.source){
+                $sources += "$($source.file)" + "<br>" + "- Line: $($source.line)" + "<br>" + "- Position: $($source.position)" + "<br>" + "- Type: $($source.type)" + "<br>"
+                $sources += "<br>"            
+            }
+            $targetName = $p.targetName
+            $targetType = $p.targetType
+            $reason = $p.reason
+            $tableContent = "| Sources | Synopsis | Name | Target Name | Target Type | Reason |" + "`r`n | --- | --- | --- | --- | --- | --- |" + "`r`n"
+            $tableContent += "| $sources | $synopsis | $name | $targetName | $targetType | $reason |" + "`r`n"
+            $markdownContent += $displayName + "`r`n`r`n" + $description + "`r`n`r`n" + $recommendation + "`r`n`r`n" + $tableContent
+        }
+        $markdownContent += "</details>" 
+
+        if($other.Count -gt 0){
+          $markdownContent += "`r`n" + "<h2>PSRule - Other rules</h2>" + "`r`n`r`n" + "`r`n"
+          $markdownContent += "<details>" + "`r`n" + "  <summary>Show other rules</summary>" + "`r`n`r`n"
+          foreach($o in $other){
+            $displayName = "<h3>$($o.info.displayName)</h3>"
+            $description = "$($o.info.description)"
+            $recommendation = "**Recommendation**  `r`n`r`n $($o.info.recommendation)"
+            $name = $o.info.name
+            $synopsis = $o.info.synopsis
+            $sources = ""
+            foreach($source in $o.source){
+                $sources += "$($source.file)" + "<br>" + "- Line: $($source.line)" + "<br>" + "- Position: $($source.position)" + "<br>" + "- Type: $($source.type)" + "<br>"
+                $sources += "<br>"            
+            }
+            $targetName = $o.targetName
+            $targetType = $o.targetType
+            $reason = $o.reason
+            $tableContent = "| Sources | Synopsis | Name | Target Name | Target Type | Reason |" + "`r`n | --- | --- | --- | --- | --- | --- |" + "`r`n"
+            $tableContent += "| $sources | $synopsis | $name | $targetName | $targetType | $reason |" + "`r`n"
+            $markdownContent += $displayName + "`r`n`r`n" + $description + "`r`n`r`n" + $recommendation + "`r`n`r`n" + $tableContent
+          }
+          $markdownContent += "</details>" 
+        }
+
+        $markdownContent | Out-File -FilePath $destination

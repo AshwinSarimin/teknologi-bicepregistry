@@ -1,0 +1,139 @@
+name: "Get module information"
+
+inputs: 
+  module:
+    description: "The module to deploy to ACR"
+    required: true
+  templatesFile:
+    description: "The templates file"
+    required: true
+  deploymentConfigFile:
+    description: "The deployment config file"
+    required: true
+  registryRootFolder:
+    description: "The root folder in the repository"
+    required: true
+  moduleRootFolder:
+    description: "The root folder for the module in the repository"
+    required: true
+  registry:
+    description: "The container registry"
+    required: true
+outputs:
+  moduleFilePath:
+    description: "The file path for the module"
+    value: ${{ steps.get_info.outputs.moduleFilePath }}
+  moduleFolderPath:
+    description: "The folder path for the module"
+    value: ${{ steps.get_info.outputs.moduleFolderPath }}
+  documentationPath:
+    description: "The documentation path for the module"
+    value: ${{ steps.get_info.outputs.documentationPath }}
+  subscriptionId:
+    description: "The subscription ID from the config file"
+    value: ${{ steps.get_info.outputs.subscriptionId }}
+  tenantId:
+    description: "The tenant ID from the config file"
+    value: ${{ steps.get_info.outputs.tenantId }}
+  currentVersion:
+    description: "The current version for the module"
+    value: ${{ steps.get-version.outputs.currentVersion }}
+  newVersion:
+    description: "The new version for the module"
+    value: ${{ steps.get-version.outputs.newVersion }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Azure Login
+      uses: Azure/login@v1
+      with:
+        creds: ${{ env.AZURE_CREDENTIALS }}
+        enable-AzPSSession: true
+    - name: Get module information
+      id: get_info
+      shell: pwsh
+      run: |
+        $module = '${{ inputs.module }}'
+        $moduleRootFolder = '${{ inputs.moduleRootFolder }}'
+        
+        $templatesFile = '${{ inputs.registryRootFolder }}${{ inputs.templatesFile }}'
+        $templatesFile = Get-Content $templatesFile 
+        $templatesFile = $templatesFile -replace '(?m)(?<=^([^"]|"[^"]*")*)//.*' -replace '(?ms)/\*.*?\*/' | ConvertFrom-Json
+
+        $deploymentConfigFile = '${{ inputs.registryRootFolder }}${{ inputs.deploymentConfigFile }}'        
+        $deploymentConfigFile = Get-Content $deploymentConfigFile 
+        $deploymentConfigFile = $deploymentConfigFile -replace '(?m)(?<=^([^"]|"[^"]*")*)//.*' -replace '(?ms)/\*.*?\*/' | ConvertFrom-Json        
+
+        $currentModule = $templatesFile | Where-Object {$_.name -eq $module}
+
+        if(($currentModule -ne $null) -and (($currentModule | Measure-Object).count -eq 1)){
+          $moduleFilePath = ($moduleRootFolder + $currentModule.filePath).replace("\","/")
+          $moduleFolderPath = ($moduleRootFolder + ($currentModule.filePath).Substring(0, ($currentModule.filePath).LastIndexOf("\"))).replace("\","/")
+          $documentationPath = ($moduleFolderPath + "/README.md").replace("\","/")
+          $versionUpdate = $currentModule.versionUpdate
+          Write-Output ('{0}={1}' -f 'moduleFilePath', $moduleFilePath)
+          Write-Output ('{0}={1}' -f 'moduleFilePath', $moduleFilePath) >> $env:GITHUB_OUTPUT
+          Write-Output ('{0}={1}' -f 'moduleFolderPath', $moduleFolderPath)
+          Write-Output ('{0}={1}' -f 'moduleFolderPath', $moduleFolderPath) >> $env:GITHUB_OUTPUT
+          Write-Output ('{0}={1}' -f 'documentationPath', $documentationPath)
+          Write-Output ('{0}={1}' -f 'documentationPath', $documentationPath) >> $env:GITHUB_OUTPUT
+          Write-Output ('{0}={1}' -f 'versionUpdate', $versionUpdate)
+          Write-Output ('{0}={1}' -f 'versionUpdate', $versionUpdate) >> $env:GITHUB_OUTPUT
+          Write-Output ('{0}={1}' -f 'subscriptionId', $deploymentConfigFile.subscriptionId)
+          Write-Output ('{0}={1}' -f 'subscriptionId', $deploymentConfigFile.subscriptionId) >> $env:GITHUB_OUTPUT
+          Write-Output ('{0}={1}' -f 'tenantId', $deploymentConfigFile.tenantId)
+          Write-Output ('{0}={1}' -f 'tenantId', $deploymentConfigFile.tenantId) >> $env:GITHUB_OUTPUT
+        }
+        else{
+          throw "module $module is missing or $module multiple modules exists in the template file ${{ inputs.templatesFile }}"
+        }
+    - name: Get new module version
+      if: ${{ steps.get_info.outputs.versionUpdate != '' }}
+      id: get-version
+      uses: azure/powershell@v1
+      with:
+        azPSVersion: "latest"
+        inlineScript: |
+          $registry = '${{ inputs.registry }}'
+          $module = '${{ inputs.module }}'
+          $versionUpdate = '${{ steps.get_info.outputs.versionUpdate }}'
+          $repositoryName = "bicep/modules/" + $module
+
+          $getModule = az acr repository show --name $registry --repository $repositoryName 
+          if($getModule){
+            $getLatestVersion = az acr repository show-tags -n $registry --repository $repositoryName --top 1 --orderby time_desc --output json | ConvertFrom-Json
+            $currentVersion = $getLatestVersion -split '\.'
+            $trimMajorVersion = $currentVersion[0] -replace 'v',''
+            switch ($versionUpdate) {
+              "major" {
+                  $newMajorVersion = [int]$trimMajorVersion + 1
+                  $newVersion = "v" + $newMajorVersion + ".0"
+                  Write-Output ('{0}={1}' -f 'currentVersion', $getLatestVersion)
+                  Write-Output ('{0}={1}' -f 'currentVersion', $getLatestVersion) >> $env:GITHUB_OUTPUT
+                  Write-Output ('{0}={1}' -f 'newVersion', $newVersion)
+                  Write-Output ('{0}={1}' -f 'newVersion', $newVersion) >> $env:GITHUB_OUTPUT
+              }
+              "minor" {
+                $currentMinorVersion = [int]$currentVersion[1] + 1
+                $newVersion = $currentVersion[0] + "." + $currentMinorVersion
+                Write-Output ('{0}={1}' -f 'currentVersion', $getLatestVersion)
+                Write-Output ('{0}={1}' -f 'currentVersion', $getLatestVersion) >> $env:GITHUB_OUTPUT
+                Write-Output ('{0}={1}' -f 'newVersion', $newVersion)
+                Write-Output ('{0}={1}' -f 'newVersion', $newVersion) >> $env:GITHUB_OUTPUT
+              }
+              default {
+                throw "versionUpdate is not set correctly"
+              }
+            }
+          }
+          else{
+            "Write-Output Module $repositoryName does not exists"
+            $newVersion = "v" + "1.0"
+            $currentVersion = "v" + "0.0"
+            Write-Output ('{0}={1}' -f 'currentVersion', $currentVersion)
+            Write-Output ('{0}={1}' -f 'currentVersion', $currentVersion) >> $env:GITHUB_OUTPUT
+            Write-Output ('{0}={1}' -f 'newVersion', $newVersion)
+            Write-Output ('{0}={1}' -f 'newVersion', $newVersion) >> $env:GITHUB_OUTPUT
+          }
+    

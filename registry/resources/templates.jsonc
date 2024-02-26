@@ -1,0 +1,7 @@
+[
+    {
+        "name": "virtual-network",
+        "filePath": "virtual-network\\bicep\\main.bicep",
+        "versionUpdate": "minor"
+    }           
+]

@@ -1,0 +1,98 @@
+name: Get changed modules
+
+on:
+  workflow_call:
+    inputs:
+      githubAppID:
+        required: true
+        type: string
+    outputs:
+      modules:
+        description: "The directory of the added or updated modules. Empty if no module was changed."
+        value: ${{ jobs.main.outputs.modules }}
+
+jobs:
+  main:
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.get-changed-modules.outputs.modules }}
+    steps:
+      - name: Create GitHub App token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with: 
+          app-id: ${{ vars.GITHUBAPPID }}
+          private-key: ${{ secrets.GITHUBPRIVATEKEY }}
+      - name: Get changed modules
+        id: get-changed-modules
+        env:
+          githubToken: ${{ steps.app-token.outputs.token }}
+        shell: pwsh
+        run: |
+          $githubToken = "$env:githubToken"
+
+          try {
+            switch ($env:GITHUB_EVENT_NAME) {
+              "pull_request" {
+                $base = "$env:GITHUB_BASE_REF"
+                $head = "$env:GITHUB_HEAD_REF"
+              }
+              "push" {
+                $eventData = Get-Content $env:GITHUB_EVENT_PATH | ConvertFrom-Json
+                $base = $eventData.before
+                $head = $eventData.after
+              }
+              default {
+                throw "Not supported event: $($env:GITHUB_EVENT_NAME)."
+              }
+            }
+            $response = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/compare/$base...$head" -Method Get -Headers @{ "Authorization" = "token $githubToken" }
+            $files = $response.files
+
+            if ($env:GITHUB_EVENT_NAME -eq "push" -and $response.Status -ne "ahead") {
+              throw "The head commit $head is not ahead of the base commit $base."
+            }
+
+            $extractModules = ($files | Where-Object {
+              $_.filename -notmatch 'infrastructure/azure/_' <# Do not select files in folder starting with _#> `
+              -and $_.filename -match '\.bicep$' <# Only select files with .bicep extension #> `
+              -and $_.filename -notmatch 'example' <# Do not select bicep files with example in it. Like example-app #> `
+              -and $_.status -notmatch 'removed' <# Do not select that are removed from the repository #> `
+            }).filename
+
+            $setmodules = @()
+
+            foreach($extract in $extractModules){
+              $getModule = ''
+              $extract = $extract -replace '^infrastructure/azure/', '' 
+              $split = $extract -Split '/'
+              $bicepIndex = $split.IndexOf('bicep') #Get index for bicep substring in filename
+              
+              for ($i = 0; $i -lt $bicepIndex; $i++) {
+                $getModule += $split[$i] + "/"
+              }
+
+              if ($getModule.EndsWith("/")) {
+                $getModule = $getModule.Substring(0, $getModule.Length - 1)
+              }
+
+              $setmodules += $getModule 
+            }
+
+            $modules = $setmodules | Select-Object -Unique
+            
+            if($modules){
+              Write-Verbose "Found $($modules.Count) changed module(s):" -Verbose
+              $modules | ForEach-Object { Write-Verbose "$_" -Verbose}
+              Write-Output ('{0}={1}' -f 'modules', (ConvertTo-Json @($modules) -Compress))
+              Write-Output ('{0}={1}' -f 'modules', (ConvertTo-Json @($modules) -Compress)) >> $env:GITHUB_OUTPUT
+            }
+            else{
+              Write-Host "No changed module(s) found."
+              return ""
+            }            
+          }
+          catch {
+            Write-Host "Error: $_"
+            exit 1
+          }

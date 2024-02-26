@@ -1,0 +1,84 @@
+name: Release Bicep Registry - Pull request
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'azure/**.bicep'
+
+env:
+  variableFile: ./.github/variables/prd.yaml
+
+jobs:
+  get-modules-to-publish:
+    uses: ./.github/workflows/registry-get-changed-modules.yaml
+    with:
+      githubAppID: ${{ vars.GITHUBAPPID }}
+    secrets: inherit
+  
+  scan-modules:
+    needs: get-modules-to-publish
+    if: ${{ needs.get-modules-to-publish.outputs.modules }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: ${{ fromJson(needs.get-modules-to-publish.outputs.modules) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Import variable file
+        uses: zlatko-ms/varfiletoenv@v3
+        with:
+          paths: ${{ env.variableFile }}
+      - name: Get Module information
+        uses: ./.github/actions/templates/registry-get-module-information
+        id: get-module-information
+        with: 
+          module: ${{ matrix.module }}
+          templatesFile: ${{ env.templatesFile }}
+          deploymentConfigFile: ${{ env.deploymentConfigFile }}
+          registryRootFolder: ${{ env.registryRootFolder }}
+          moduleRootFolder: ${{ env.moduleRootFolder }}
+          registry: ${{ env.registry }}
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.BICEP_GITHUBACTIONS }}      
+      - name: "Check documentation for ${{ matrix.module }}"
+        uses: ./.github/actions/templates/registry-check-documentation-module
+        with:
+          module: ${{ matrix.module }}
+          newVersion: ${{ steps.get-module-information.outputs.newVersion }}
+          documentationPath: ${{ steps.get-module-information.outputs.documentationPath }}
+      - name: "Create ARM parameter file for ${{ matrix.module }}"
+        uses: ./.github/actions/templates/create-arm-parameter-file
+        id: create-arm-parameter-file
+        with: 
+          moduleFolderPath: ${{ steps.get-module-information.outputs.moduleFolderPath }}
+          registryRootFolder: ${{ env.registryRootFolder }}
+          deploymentConfigFile: ${{ env.deploymentConfigFile }}
+      - name: "PSRule scan for ${{ matrix.module }}" 
+        uses: ./.github/actions/templates/registry-validate-module-psrule
+        with:
+          moduleFolderPath: ${{ steps.get-module-information.outputs.moduleFolderPath }}
+          psrulePath: ${{ env.psrulePath }}
+          psruleOutputMarkdown: ${{ env.psruleOutputMarkdown }}
+      - name: "Trivy scan for ${{ matrix.module }}"
+        uses: ./.github/actions/templates/registry-validate-module-trivy
+        with:
+          moduleFolderPath: ${{ steps.get-module-information.outputs.moduleFolderPath }}
+          trivyLowMediumOutputMarkdown: ${{ env.trivyLowMediumOutputMarkdown }}
+          trivyHighCriticalOutputMarkdown: ${{ env.trivyHighCriticalOutputMarkdown }}
+      - name: Publish ${{ matrix.module }} info in pull request
+        uses: ./.github/actions/templates/registry-comment-pull-request
+        if: always()
+        with:
+          module: ${{ matrix.module }}
+          githubAppID: ${{ vars.GITHUBAPPID }}
+          githubPrivateKey: ${{ secrets.GITHUBPRIVATEKEY }}
+          currentVersion: ${{ steps.get-module-information.outputs.currentVersion }}
+          newVersion: ${{ steps.get-module-information.outputs.newVersion }}
+          documentationPath: ${{ steps.get-module-information.outputs.documentationPath }}
+          moduleFolderPath: ${{ steps.get-module-information.outputs.moduleFolderPath }}
+          psruleOutputMarkdown: ${{ env.psruleOutputMarkdown }}
+          trivyLowMediumOutputMarkdown: ${{ env.trivyLowMediumOutputMarkdown }}
+          trivyHighCriticalOutputMarkdown: ${{ env.trivyHighCriticalOutputMarkdown }}

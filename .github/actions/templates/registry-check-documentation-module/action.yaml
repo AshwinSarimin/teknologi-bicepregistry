@@ -1,0 +1,47 @@
+name: "Check module documentation"
+
+inputs: 
+  module:
+    description: "The module to deploy to ACR"
+    required: true
+  newVersion:
+    description: "The new version for the module"
+    required: true
+  documentationPath:
+    description: "The documentation path for the module"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check module documentation for ${{ inputs.module }}
+      id: check-documentation
+      shell: pwsh
+      run: |
+        $module = '${{ inputs.module }}'
+        $newVersion = ('${{ inputs.newVersion }}').replace("v","")
+        $documentationPath = '${{ inputs.documentationPath }}'
+        
+        write-output $documentationPath
+        $getVersion = Get-Content -Path $documentationPath | Select-String -Pattern "| $newVersion |" -SimpleMatch
+        if(!$getVersion){
+          write-output "Cannot retrieve version $newVersion in simple format"
+          $getVersion = Get-Content -Path $documentationPath | Select-String -Pattern "\| \[$newVersion]\(https://.*\) \|"
+          if($getVersion){
+            write-output "Retrieved version $newVersion in document linked format"
+            if($getVersion.Count -ne 1){
+                write-error "There are multiple string patterns found for $newVersion in README file: $documentationPath"
+                throw
+            }
+          }
+          else{
+            write-error "Cannot get version $newVersion in the ChangeLog from README file: $documentationPath"
+            throw
+          }
+        }
+        else{
+          if($getVersion.Count -ne 1){
+                write-error "There are multiple string patterns found for $newVersion in README file: $documentationPath"
+                throw
+          }
+        }        

@@ -1,0 +1,63 @@
+name: "Trivy - scan module"
+description: "Run trivy infrastructure as code scan for module"
+
+inputs:
+  moduleFolderPath:
+    description: "The path to the template test folder"
+    required: true
+    default: ""
+  trivyLowMediumOutputMarkdown:
+    description: "The file name for exporting Low and Medium scan results"
+    required: true
+  trivyHighCriticalOutputMarkdown:
+    description: "The file name for exporting High and Critical scan results"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Convert Bicep to ARM
+      shell: bash
+      run: |
+        echo "::group::Convert Bicep to ARM"
+        az bicep build --file ${{ inputs.moduleFolderPath }}/main.bicep 
+        echo "::endgroup::"
+    - name: Run Trivy config scanner - Low,Medium
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-ref: ${{ inputs.moduleFolderPath }}
+        scan-type: 'config'
+        hide-progress: false
+        exit-code: '0'
+        ignore-unfixed: true
+        severity: 'LOW,MEDIUM'
+        format: template
+        template: "@/github/workspace/software/trivy/templates/markdown.tpl"
+        output: ${{ inputs.trivyLowMediumOutputMarkdown }}
+    - name: Run Trivy config scanner - High,Critical
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-ref: ${{ inputs.moduleFolderPath }}
+        scan-type: 'config'
+        hide-progress: false
+        exit-code: '0'
+        ignore-unfixed: true
+        severity: 'CRITICAL,HIGH'
+        format: template
+        template: "@/github/workspace/software/trivy/templates/markdown.tpl"
+        output: ${{ inputs.trivyHighCriticalOutputMarkdown }}
+    - name: Output Trivy Results to step summary
+      shell: bash
+      if: always()
+      run: |
+        # Sed command is used to replace the header in the job summary for the outputs (Target value is empty in this scan)
+        sed -i 's|<h2>Trivy scan</h2>|<h2>Trivy scan: Low - Medium</h2>|' ${{ inputs.trivyLowMediumOutputMarkdown }}
+        sed -i 's|<h2>Trivy scan</h2>|<h2>Trivy scan: High - Critical</h2>|' ${{ inputs.trivyHighCriticalOutputMarkdown }}
+        # Sed command is used to replace the empty report text in the job summary
+        sed -i 's|<h2>Trivy Returned Empty Report</h2>|<h2>Trivy scan: Low - Medium (Trivy Returned Empty Report)</h2>|' ${{ inputs.trivyLowMediumOutputMarkdown }}
+        sed -i 's|<h2>Trivy Returned Empty Report</h2>|<h2>Trivy scan: High - Critical (Trivy Returned Empty Report)</h2>|' ${{ inputs.trivyHighCriticalOutputMarkdown }}
+        cat ${{ inputs.trivyLowMediumOutputMarkdown }} >> $GITHUB_STEP_SUMMARY
+        cat ${{ inputs.trivyHighCriticalOutputMarkdown }} >> $GITHUB_STEP_SUMMARY
+
+
+        

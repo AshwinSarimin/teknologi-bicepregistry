@@ -1,0 +1,44 @@
+name: "Publish module"
+
+inputs: 
+  module:
+    description: "The module to deploy to ACR"
+    required: true
+  registry:
+    description: "The registry where the module will be published"
+    required: true
+  newVersion:
+    description: "The new version for the module"
+    required: true
+  moduleFilePath:
+    description: "The file path for the module"
+    required: true
+  documentationPath:
+    description: "The documentation path for the module"
+    required: true
+  repositoryURL: 
+    description: "The repository URL where the modules are stored"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Azure Login
+      uses: Azure/login@v1
+      with:
+        creds: ${{ env.AZURE_CREDENTIALS }}
+        enable-AzPSSession: true
+    - name: Publish module
+      id: publish
+      uses: azure/powershell@v1
+      with:
+        azPSVersion: "latest"
+        inlineScript: |
+          $documentationPath = '${{ inputs.documentationPath }}'
+          $readmePath = $documentationPath.Substring(1)
+          $documentationUri = "${{ inputs.repositoryURL }}/blob/${{ github.sha }}$readmePath"
+          az bicep publish `
+            --file ${{ inputs.moduleFilePath }} `
+            --target "br:${{ inputs.registry }}/bicep/modules/${{ inputs.module }}:${{ inputs.newVersion }}" `
+            --documentationUri $documentationUri `
+            --force

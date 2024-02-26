@@ -1,0 +1,28 @@
+{
+    "tenantId": "xxxxxxx-xxxx-xxxx-xxxx-xxxxxxx",
+    "subscriptionId": "xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxx",
+    "resourceGroupName": "<CUSTOMERCODE>-<ENVIRONMENT>-rg",
+    "virtualNetworks": [
+        {
+            "name": "<CUSTOMERCODE>-<ENVIRONMENT>-vnet",
+            "tags": {
+                "Environment": "DEV",
+                "CostCenter": "Development"
+            },    
+            "addressPrefixes": [ 
+                "192.168.0.0/16"
+            ],
+            "subnets": [ 
+                {
+                    "name": "<CUSTOMERCODE>-<ENVIRONMENT>-subnet", 
+                    "addressPrefix": "192.168.0.0/20", 
+                    "serviceEndpoints": [
+                        "Microsoft.KeyVault"
+                    ],
+                    "delegations": [],
+                    "natGateway": ""
+                }
+            ]
+        }
+    ]
+}
