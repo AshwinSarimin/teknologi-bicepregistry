@@ -103,7 +103,7 @@ jobs:
       uses: zlatko-ms/varfiletoenv@v3
       with:
         paths: ${{ env.variableFile }}
-    - uses: actions/download-artifact@v3 #Using version 3 because it supports downloading multiple files to the same artifact name
+    - uses: actions/download-artifact@v4.1.7 #Using version 3 because it supports downloading multiple files to the same artifact name
       with:
         name: changes
     - name: Display structure of downloaded files
